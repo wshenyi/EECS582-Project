@@ -59,19 +59,19 @@ public:
   std::string getStmtText(Stmt *s);
 };
 
-class GridHandler : public MatchFinder::MatchCallback{
+class PMEMPoolFinder : public MatchFinder::MatchCallback{
 private:
   Rewriter &Rewrite;
 
 public:
-  GridHandler(Rewriter &Rewrite) : Rewrite(Rewrite){}
+  PMEMPoolFinder(Rewriter &Rewrite) : Rewrite(Rewrite){}
   virtual void run(const MatchFinder::MatchResult &Result) override;
 };
 
 class MyASTConsumer: public ASTConsumer {
 private:
-  MyRecursiveASTVisitor visitor;
-  GridHandler HandleGrid;
+  MyRecursiveASTVisitor Visitor;
+  PMEMPoolFinder Finder;
   MatchFinder Matcher;
   CompilerInstance *CI;
   //SourceManager *SM;

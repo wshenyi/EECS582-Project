@@ -36,9 +36,9 @@ int main (int argc, char *argv[]) {
   strcpy(buf, argv[2]);
 
   rootp->len = strlen(buf);
- TX_BEGIN(){
+ 	TX_BEGIN(pop){
    pmemobj_persist(pop, &rootp->len, sizeof (rootp->len));
-  }TX_END
+  	}TX_END
   
   pmemobj_memcpy_persist(pop, rootp->buf, buf, rootp->len);
 
