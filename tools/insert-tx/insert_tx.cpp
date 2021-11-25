@@ -17,27 +17,8 @@
 // Declares llvm::cl::extrahelp.
 #include "llvm/Support/raw_ostream.h"
 
-// global variable for counting how many times a CUDA kernel function has been called.
-int kernelCount = 0; // used to find the first kernel call
-int traverseCount = 1; // for this tool we need to traverse the AST tree 3 times
-int gridX = 0;
-int gridY = 0;
-int gridInt = 0;
-std::string gridValueX;
-std::string gridValueY;
-std::string gridIntValue;
-std::list<std::string> parameterList = {};
-std::list<std::string> functionnameList = {};
-std::string functionName;
-
 std::string PoolFileName;
 
-SourceLocation sl;
-int num_parents = 0;
-int loop = 0;
-//CompilerInstance *CI;
-SourceManager *SM;
-LangOptions *LO;
 
 // Apply a custom category to all command-line options so that they are the
 // only ones displayed.
@@ -51,6 +32,9 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 // A help message for this specific tool can be added afterwards.
 static cl::extrahelp MoreHelp("\nMore help text...");
 
+unsigned MyInputProcessor::GetTXBegin() {return tx_begin_line;}
+
+unsigned MyInputProcessor::GetTXEnd() {return tx_end_line;}
 
 bool MyRecursiveASTVisitor::VisitDeclRefExpr(DeclRefExpr *S){
   std::string call_name = S->getDecl()->getDeclName().getAsString();
@@ -61,87 +45,9 @@ bool MyRecursiveASTVisitor::VisitDeclRefExpr(DeclRefExpr *S){
     const clang::Stmt *grand_parent_node = grand_parent.get<clang::Stmt>();
 
     Rewrite.InsertText(grand_parent_node->getBeginLoc().getLocWithOffset(-1), "\tTX_BEGIN(" + PoolFileName + "){\n" , false, true);
-    Rewrite.InsertText(grand_parent_node->getEndLoc().getLocWithOffset(2), "\n\t}TX_END\n", true, true);
+    Rewrite.InsertText(grand_parent_node->getBeginLoc().getLocWithOffset(2), "\n\t}TX_END\n", true, true);
   }
   return true;
-}
-
-
-void MyRecursiveASTVisitor::RewriteBlockIdx(Stmt *s) {
-  if(MemberExpr *me = dyn_cast<MemberExpr>(s)){
-    //std::string member = me->getMemberDecl()->getNameAsString();
-    //me->dump();
-    std::string member = me->getMemberDecl()->getNameAsString();
-    if(OpaqueValueExpr *ove = dyn_cast<OpaqueValueExpr>(me->getBase())){
-      Expr *SE = ove->getSourceExpr();
-      if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(SE)) {
-        std::string base = DRE->getNameInfo().getAsString();
-        if(base == "blockIdx" && member == "__fetch_builtin_x"){
-          Rewrite.ReplaceText(me->getBeginLoc(), 10, "(int)fmodf((float)__SMC_chunkID, (float)__SMC_orgGridDim.x)");
-        }
-        if(base == "blockIdx" && member == "__fetch_builtin_y"){
-          Rewrite.ReplaceText(me->getBeginLoc(), 10, "(int)(__SMC_chunkID/__SMC_orgGridDim.x)");
-        }
-        //std::cout<<base<<"."<<member<<"\n";
-      }
-    }
-    //std::cout<<"This is a MemberExpr in kernel function! Member name: ";
-    //std::cout<<me->getMemberNameInfo().getName().getAsString() << "\n";
-  }
-  for(Stmt::child_iterator CI = s->child_begin(), CE = s->child_end(); CI != CE; ++CI){
-    if (*CI) RewriteBlockIdx(*CI);
-  }
-}
-
-
-int MyRecursiveASTVisitor::GetParentStmt(const Stmt &stmt) {
-  auto it = Context->getParents(stmt).begin();
-  if(it == Context->getParents(stmt).end()){
-    return 1;
-  }
-  else{
-    const clang::Stmt *s = it->get<clang::Stmt>();
-    if(s){
-      num_parents++;
-      return GetParentStmt(*s);
-    }
-    const clang::FunctionDecl *fd = it->get<clang::FunctionDecl>();
-    if(fd){
-      std::string functionname = fd->getNameInfo().getName().getAsString();
-      functionnameList.push_back(functionname);
-      //std::cout<<functionname<<"\n";
-    }
-    return 1;
-  }
-
-  return 0;
-}
-
-
-void MyRecursiveASTVisitor::GetStmt(int num_parents, const Stmt &stmt) {
-  if(loop == num_parents-2){
-    auto it = Context->getParents(stmt).begin();
-    const clang::Stmt *s = it->get<clang::Stmt>();
-    Rewrite.InsertText(s->getBeginLoc(), "__SMC_init();\n", true, true);
-  }
-  else{
-    auto it = Context->getParents(stmt).begin();
-    const clang::Stmt *s = it->get<clang::Stmt>();
-    loop++;
-    return GetStmt(num_parents, *s);
-  }
-
-}
-
-
-void MyRecursiveASTVisitor::RewriteKernelCall(Stmt *s){}
-
-
-std::string MyRecursiveASTVisitor::getStmtText(Stmt *s) {
-  SourceLocation a(SM->getExpansionLoc(s->getBeginLoc())),
-                 b(Lexer::getLocForEndOfToken(SourceLocation(SM->getExpansionLoc(s->getEndLoc())),
-                                   0,  *SM, *LO));
-  return std::string(SM->getCharacterData(a), SM->getCharacterData(b)-SM->getCharacterData(a));
 }
 
 
@@ -155,13 +61,6 @@ void PMEMPoolFinder::run(const MatchFinder::MatchResult &Result) {
 }
 
 
-MyASTConsumer::MyASTConsumer(Rewriter &Rewrite, ASTContext *Context, CompilerInstance *comp)
-    : Visitor(Rewrite, Context), Finder(Rewrite), CI(comp){
-//  SourceLocation startOfFile = Rewrite.getSourceMgr().getLocForStartOfFile(Rewrite.getSourceMgr().getMainFileID());
-//  Rewrite.InsertText(startOfFile, "/* Added smc.h*/ \n#include \"smc.h\"\n\n",true,true);
-}
-
-
 void MyASTConsumer::Initialize(ASTContext &Context) {
   SM = &Context.getSourceManager();
   LO = &CI->getLangOpts();
@@ -169,17 +68,19 @@ void MyASTConsumer::Initialize(ASTContext &Context) {
 
 
 void MyASTConsumer::HandleTranslationUnit(ASTContext &Context) {
-  auto dsl = varDecl(hasInitializer(callExpr(callee(functionDecl(hasAnyName("pmemobj_create")))))).bind("pmemobj_create");
-  Matcher.addMatcher(dsl, &Finder);
+  auto matcher = varDecl(hasInitializer(callExpr(callee(functionDecl(hasAnyName("pmemobj_create")))))).bind("pmemobj_create");
+  Matcher.addMatcher(matcher, &Finder);
   Matcher.matchAST(Context);
 
-  Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+  Inserter.InsertText(SM->translateLineCol(SM->getMainFileID(), InputData.GetTXBegin(), 1), "TX_BEGIN(" + PoolFileName + "){\n" , false, true);
+  Inserter.InsertText(SM->translateLineCol(SM->getMainFileID(), InputData.GetTXEnd(), 1), "}TX_END\n", false, true);
+
+//  Visitor.TraverseDecl(Context.getTranslationUnitDecl());
 }
 
 
 std::unique_ptr<ASTConsumer>
-MyFrontendAction::CreateASTConsumer(CompilerInstance &Compiler,
-                                    llvm::StringRef File) {
+MyFrontendAction::CreateASTConsumer(CompilerInstance &Compiler, llvm::StringRef File) {
   TheRewriter.setSourceMgr(Compiler.getSourceManager(), Compiler.getLangOpts());
   return std::make_unique<MyASTConsumer>(TheRewriter, &Compiler.getASTContext(), &Compiler);
 }

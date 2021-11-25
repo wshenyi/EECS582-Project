@@ -21,6 +21,21 @@ using namespace llvm;
 using namespace clang;
 using namespace clang::ast_matchers;
 
+class MyInputProcessor{
+private:
+    unsigned tx_begin_line;
+    unsigned tx_end_line;
+
+public:
+    MyInputProcessor(){
+        tx_begin_line = 39;
+        tx_end_line = 40;
+    }
+
+    unsigned GetTXBegin();
+    unsigned GetTXEnd();
+};
+
 class MyRecursiveASTVisitor : public RecursiveASTVisitor <MyRecursiveASTVisitor> {
 private:
   Rewriter &Rewrite;
@@ -33,53 +48,28 @@ public:
   // If any FunctionDecl is found, check if it's a CUDA kernel FunctionDecl, then perform different action accordingly.
   bool VisitDeclRefExpr(DeclRefExpr *S);
 
-  // This function is to rewrite the blockIdx.x and blockIdx.y to smc form
-  void RewriteBlockIdx(Stmt *s);
-
-  // try to find the first CUDAKernelCallExpr's parent and
-  // to see if this Expr has any parent if/for/while stmt.
-  // hope this works
-  int GetParentStmt(const clang::Stmt& stmt);
-
-  //This function inserts __SMC_init(); at the right place.
-  void GetStmt(int num_parents, const clang::Stmt& stmt);
-
-  /*
-          The is the core function of this tool.
-          For every CUDA kernel function call, it first record the name of the grid variable during the first traverse.
-          Then it tries to find out if the grid variable is initialized separately in the form of grid.x = ... and grid.y = ...
-          If this is the case, add a new line after the initialization: dim3 __SMC_orgGridDim();
-
-          If no, it traverse the AST for the 3rd time and tries to find out if the grid variable is initialized as a integer, in other words, 1-D grid.
-          If yes, rewrite the grid variable to dim3 __SMC_orgGridDim(...);
-  */
-  void RewriteKernelCall(Stmt *s);
-
-  // This function returns the string representation of any give stmt pointer
-  std::string getStmtText(Stmt *s);
 };
 
 class PMEMPoolFinder : public MatchFinder::MatchCallback{
-private:
-  Rewriter &Rewrite;
-
 public:
-  PMEMPoolFinder(Rewriter &Rewrite) : Rewrite(Rewrite){}
   virtual void run(const MatchFinder::MatchResult &Result) override;
 };
 
 class MyASTConsumer: public ASTConsumer {
 private:
+  MyInputProcessor InputData;
   MyRecursiveASTVisitor Visitor;
+  Rewriter &Inserter;
   PMEMPoolFinder Finder;
   MatchFinder Matcher;
   CompilerInstance *CI;
-  //SourceManager *SM;
-  //LangOptions *LO;
+  SourceManager *SM;
+  LangOptions *LO;
 
 public:
 
-  explicit MyASTConsumer(Rewriter &Rewrite, ASTContext *Context, CompilerInstance *comp);
+  explicit MyASTConsumer(Rewriter &Rewrite, ASTContext *Context, CompilerInstance *comp)
+  : Visitor(Rewrite, Context), Inserter(Rewrite), CI(comp){}
 
   virtual void Initialize(ASTContext &Context) override;
 
