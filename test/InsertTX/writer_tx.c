@@ -1,47 +1,67 @@
-//
-// Created by 王珅祎 on 2021/10/20.
-//
-
+#include <emmintrin.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+
 #include <libpmemobj.h>
+#include <valgrind/pmemcheck.h>
 
-#include "layout.h"
 
-int main (int argc, char *argv[]) {
-  if (argc < 3) {
-    printf("usage: %s [file-name] [input-string]\n", argv[0]);
+#define LAYOUT_NAME "intro_1"
+#define MAX_BUF_LEN 2
+
+struct my_block {
+  int flag;
+  int data;
+};
+
+struct my_root {
+  size_t pcounter;
+  struct my_block array[MAX_BUF_LEN];
+};
+int
+main(int argc, char *argv[])
+{
+  if (argc != 2) {
+    printf("usage: ./writer ${pmfile} \n");
     return 1;
   }
 
-  PMEMobjpool *pop = pmemobj_create(argv[1], LAYOUT_NAME,PMEMOBJ_MIN_POOL, 0666);
+  PMEMobjpool *pop = pmemobj_create(argv[1], LAYOUT_NAME,
+                                    PMEMOBJ_MIN_POOL, 0666);
 
   if (pop == NULL) {
-    pop = pmemobj_open(argv[1], LAYOUT_NAME);
-    if (pop == NULL) {
-      perror("pmemobj cannot create or read");
-      return 1;
-    }
-  }
-
-  if (strlen(argv[2]) >= MAX_BUF_LEN){
-    printf("input string exceed max buff line %u", MAX_BUF_LEN);
+    perror("pmemobj_create");
     return 1;
   }
+
 
   PMEMoid root = pmemobj_root(pop, sizeof(struct my_root));
   struct my_root *rootp = (struct my_root *)pmemobj_direct(root);
 
-  char buf[MAX_BUF_LEN];
-  strcpy(buf, argv[2]);
+  rootp->pcounter = 0;
+  pmemobj_persist(pop, &rootp->pcounter, sizeof(rootp->pcounter));
 
-  rootp->len = strlen(buf);
+  for (size_t i=0; i<MAX_BUF_LEN; i++) {
+    rootp->array[i].flag = -1;
+    pmemobj_persist(pop, &rootp->array[i], sizeof(rootp->array[i]));
+  }
 TX_BEGIN(pop){
-    pmemobj_persist(pop, &rootp->len, sizeof (rootp->len));
-}TX_END
-    pmemobj_memcpy_persist(pop, rootp->buf, buf, rootp->len);
+  for (size_t i=0; i<MAX_BUF_LEN; i++) {
+    rootp->pcounter++;
+    pmemobj_persist(pop, &rootp->pcounter, sizeof(rootp->pcounter));
+    if (rand() % 2 == 0) {
+      rootp->array[i].data = 66;
+      rootp->array[i].flag = 0;
+    } else {
 
-  pmemobj_close(pop);
+            rootp->array[i].flag = 1;
+    }
+    pmemobj_persist(pop, &rootp->array[i], sizeof(rootp->array[i]));
+  }
+}TX_END
+
 
   return 0;
 }

@@ -15,25 +15,30 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Tooling/Tooling.h"
+#include "nlohmann/json.hpp"
+
+#include <vector>
+#include <utility>
 
 using namespace clang::tooling;
 using namespace llvm;
 using namespace clang;
 using namespace clang::ast_matchers;
+using json = nlohmann::json;
 
-class MyInputProcessor{
+class MyInputManager{
 private:
-    unsigned tx_begin_line;
-    unsigned tx_end_line;
+    std::vector<std::pair<unsigned, unsigned>> interval_array;
+    std::string filepath;
 
 public:
-    MyInputProcessor(){
-        tx_begin_line = 39;
-        tx_end_line = 40;
-    }
+    explicit MyInputManager();
 
-    unsigned GetTXBegin();
-    unsigned GetTXEnd();
+    void RegulateFormat(std::string &s);
+    void MergeInterval();
+    unsigned GetSize();
+    void AddInterval(unsigned int BeginLine, unsigned int EndLine);
+    std::pair<unsigned, unsigned>& GetInterval(unsigned int index);
 };
 
 class MyRecursiveASTVisitor : public RecursiveASTVisitor <MyRecursiveASTVisitor> {
@@ -44,10 +49,9 @@ private:
 public:
   explicit MyRecursiveASTVisitor(Rewriter &R, ASTContext *Context):Rewrite(R), Context(Context){}
 
-  // This function is used to traverse the entire AST tree and finds any function declarations.
-  // If any FunctionDecl is found, check if it's a CUDA kernel FunctionDecl, then perform different action accordingly.
-  bool VisitDeclRefExpr(DeclRefExpr *S);
+//  bool VisitDeclRefExpr(DeclRefExpr *S);
 
+  bool VisitFunctionDecl(FunctionDecl *F);
 };
 
 class PMEMPoolFinder : public MatchFinder::MatchCallback{
@@ -57,7 +61,7 @@ public:
 
 class MyASTConsumer: public ASTConsumer {
 private:
-  MyInputProcessor InputData;
+  MyInputManager InputData;
   MyRecursiveASTVisitor Visitor;
   Rewriter &Inserter;
   PMEMPoolFinder Finder;
